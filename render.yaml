@@ -57,18 +57,3 @@ services:
         sync: false
       - key: AUTO_APPROVE
         sync: false
-
-  - type: cron
-    name: medpulse-keepalive
-    runtime: docker
-    dockerContext: web
-    dockerfilePath: web/Dockerfile.keepalive
-    schedule: "*/5 * * * *"
-    plan: free
-    envVars:
-      - key: HEALTH_URL
-        fromService:
-          type: web
-          name: medpulse-console
-          property: url
-        value: /api/health
