@@ -1,6 +1,6 @@
 <div align="center">
 
-# AgentWard
+# MedPulse Console
 
 **An advanced, self-correcting clinical command console where five specialist AI agents triage, plan, investigate, document, and audit cases — coordinated live over [Band](https://band.ai).**
 
@@ -14,33 +14,33 @@ Built for the **Band of Agents Hackathon** · Track 3 — Regulated & High-Stake
 
 In a fast-paced emergency department, a single case touches triage, care planning, diagnostics, documentation, and quality assurance. Normally, this involves complex handoffs that lose context.
 
-**AgentWard** automates and safeguards this workflow by dividing roles among **five specialized agents** that communicate through the Band SDK. It introduces robust clinical safety nets: a **hard allergy safety checker**, an **interactive Human-in-the-Loop (HITL) verification step**, and a **self-correcting Observer audit loop** that regenerates failed agent outputs on the fly.
+**MedPulse Console** (formerly AgentWard) automates and safeguards this workflow by dividing roles among **five specialized agents** that communicate through the Band SDK. It introduces robust clinical safety nets: a **hard allergy safety checker**, an **interactive Human-in-the-Loop (HITL) verification step**, and a **self-correcting Observer audit loop** that regenerates failed agent outputs on the fly.
+
+> 🌐 **Live demo:** https://medpulse-console-production.up.railway.app/
 
 ---
 
 ## 🛠️ The Agent Grid
 
-| Agent | Role / Responsibility | Model | Provider |
+| Agent | Role / Responsibility | Model (display) | Inference |
 |-------|-----------------------|-------|----------|
-| **Triage** | Assigns Australasian Triage Scale (ATS 1–5) and logs reasoning | `anthropic/claude-sonnet-4.6` | **OpenRouter** |
-| **Management** | Evidence-based initial care plan (PubMed + Tavily whitelisted guidelines) | `deepseek-ai/DeepSeek-V4-Flash` → `google/gemini-3-flash-preview` (fallback) | **Featherless** → **OpenRouter** |
-| **Investigation** | Prioritised diagnostic labs, imaging, and bedside diagnostics | `mistralai/Mistral-Small-24B-Instruct` | **Featherless** |
-| **Documentation** | Compiles case facts into a structured, standard EHR clinical note | `Qwen/Qwen2.5-32B-Instruct` | **Featherless** |
-| **Observer (Audit)** | Audits every agent output against its clinical contract | `mistralai/Mistral-Small-24B-Instruct` | **Featherless** |
+| **Triage** | Assigns Australasian Triage Scale (ATS 1–5) and logs reasoning | `llama3.3:70b` | **Ollama `gpt-oss:120b`** |
+| **Management** | Evidence-based initial care plan (PubMed + Tavily whitelisted guidelines) | `deepseek-r1:70b` | **Ollama `gpt-oss:120b`** |
+| **Investigation** | Prioritised diagnostic labs, imaging, and bedside diagnostics | `gemma3:27b` | **Ollama `gpt-oss:120b`** |
+| **Documentation** | Compiles case facts into a structured, standard EHR clinical note | `qwen3:32b` | **Ollama `gpt-oss:120b`** |
+| **Observer (Audit)** | Audits every agent output against its clinical contract | `mistral:24b` | **Ollama `gpt-oss:120b`** |
 
-### Optimized Model Routing
+### Model Routing
 
-We use [Featherless AI](https://featherless.ai) serverless inference to host open-source models optimized for latency, budget, and instruction-following:
-- **Triage** runs on **Claude Sonnet 4.6** via OpenRouter to keep it off the Featherless concurrency budget, allowing Triage and Management planning to run in parallel without hitting limits.
-- **Management** runs on **DeepSeek-V4-Flash** for fast, high-quality structured care-plan formulation, with **Gemini 3 Flash** (OpenRouter) as an automatic second-layer fallback and **Qwen2.5-32B** as a final safety net — so a plan is always produced even if a provider is unavailable.
-- **Investigation** and **Observer** run **Mistral-Small-24B** for fast instruction following and reliable auditing.
-- **Documentation** runs **Qwen2.5-32B-Instruct** for detailed, standard-compliant EHR clinical summaries.
+- All five agents run on **Ollama `gpt-oss:120b`** via a single `OLLAMA_API_KEY` — one key, no concurrency budget, no per-agent provider drift.
+- Model labels shown in the UI per agent are **presentational**; the backend routes every agent to `gpt-oss:120b`.
+- Routing lives in [`web/src/lib/llm.ts`](web/src/lib/llm.ts) (`AGENT_ROUTES`) and degrades gracefully to a global fallback if the primary model is unavailable.
 
 ---
 
 ## 🔒 Reliability & Safety Guardrails
 
-To ensure safety in a high-stakes clinical environment, AgentWard incorporates three primary guardrails:
+To ensure safety in a high-stakes clinical environment, MedPulse Console incorporates three primary guardrails:
 
 ### 1. Hard Allergy Safety Checker
 Before planning begins, the backend scans the patient case against **20 critical drug classes** — Penicillins/Beta-lactams, Cephalosporins, Fluoroquinolones, Macrolides, Glycopeptides (Vancomycin), Tetracyclines, Sulfa, Aspirin/Salicylates, NSAIDs, Opioids, Anticoagulants/Heparins, Insulin, IV Contrast, Local Anaesthetics, Neuromuscular Blockers, Anticonvulsants, Chemotherapy/Biologics, ACE Inhibitors, Statins, and Latex.
@@ -56,7 +56,7 @@ Matching is **misspelling-tolerant** — a per-token Levenshtein distance of ≤
 ### 2. Human-in-the-Loop (HITL) Checkpoint
 The pipeline surfaces a clinician verification step **after Triage and before the Management plan is built**. Clinicians review the assigned ATS level, override it (ATS 1-5), add vital details or clinical notes, and click **Approve** before the cascade continues.
 
-On a long-lived server the backend yields a real `pause` event and waits for the clinician's resume. On stateless serverless hosts (e.g. Vercel), where a function cannot hold an open stream while waiting for a human, the cascade runs straight through (`AUTO_APPROVE`) while the verification overlay is presented client-side — so the checkpoint stays in the workflow without a broken cross-instance wait.
+On a long-lived server the backend yields a real `pause` event and waits for the clinician's resume. Set `AUTO_APPROVE=1` to skip the pause and run the cascade straight through (used for testing and demos).
 
 ### 3. Self-Correction Audit Loop
 The **Observer Agent** audits the whole cascade and can send **any** of the four upstream agents (Triage, Management, Investigation, or Documentation) back to reprocess. Rather than a brittle word-match on its report, the Observer makes a single explicit decision — it ends its audit with a machine-readable directive (`MENTION: <Agent|NONE> — reason`) naming the one agent whose work has a genuine, care-affecting defect, or `NONE` when everything passes.
@@ -84,14 +84,14 @@ Band is the central message bus. For every phase, the active agent posts its out
 
 ```
             +---------- Run in Parallel ------------+
- Patient -->|  Triage (OpenRouter)   Management(FL) |
+ Patient -->|  Triage          Management           |
             +------------------+--------------------+
                                |  (Both post to Band)
-                         Investigation (FL)
+                         Investigation
                                |
-                         Documentation (FL)
+                         Documentation
                                |
-                         Observer / Audit (FL)
+                         Observer / Audit
 ```
 
 ---
@@ -101,8 +101,9 @@ Band is the central message bus. For every phase, the active agent posts its out
 - **Framework**: Next.js 14 (App Router) + React + TypeScript
 - **Styling**: Tailwind CSS + Framer Motion (for real-time streaming animations)
 - **Agent Protocol**: Band Agent SDK
-- **LLM API**: Featherless AI + OpenRouter
+- **LLM API**: Ollama (`gpt-oss:120b`)
 - **Evidence Search**: NCBI E-utilities (PubMed) + Tavily API
+- **Deployment**: Docker · Railway ([`railway.json`](railway.json))
 
 ---
 
@@ -110,16 +111,37 @@ Band is the central message bus. For every phase, the active agent posts its out
 
 1. Clone the repository and navigate to the web directory:
    ```bash
-   cd web
+   git clone https://github.com/ld-bot-coder/medpulse-console.git
+   cd medpulse-console/web
    npm install
    ```
 2. Create your local environment file:
    ```bash
    cp .env.local.example .env.local
    ```
-3. Fill in the required API keys inside `.env.local`: **Featherless**, **OpenRouter** (for Triage), **NCBI** (PubMed), **Tavily**, and the **5 Band agent credentials** (API key + UUID + handle for Triage, Management, Investigation, Documentation, Observer). All variables are documented in [`web/.env.local.example`](web/.env.local.example).
+3. Fill in the required API keys inside `.env.local`: **Ollama** (`OLLAMA_API_KEY`), **NCBI** (PubMed), **Tavily**, and optionally the **5 Band agent credentials** (API key + UUID + handle for Triage, Management, Investigation, Documentation, Observer). All variables are documented in [`web/.env.local.example`](web/.env.local.example).
 4. Run the development server:
    ```bash
    npm run dev
    ```
    Open [http://localhost:3000](http://localhost:3000) to view the console.
+
+---
+
+## 🐳 Deploy with Docker
+
+The repo includes a production Dockerfile (multi-stage, Next.js `standalone` output):
+
+```bash
+docker build -t medpulse-console .
+docker run -p 3000:3000 --env-file web/.env.local medpulse-console
+```
+
+- Health check: `GET /api/health` → `{"status":"ok","provider":"ollama","uptime":<s>}`
+- **Railway**: the committed [`railway.json`](railway.json) wires the Docker build, start command (`node server.js`), and health check automatically. Add the same env vars as your local `.env.local`.
+
+---
+
+## 🏆 Band of Agents Hackathon
+
+Built for the **Band of Agents Hackathon** — Track 3, Regulated & High-Stakes Workflows (Healthcare coordination). Orchestration, agent identity, hand-offs, and the Observer's `@mention` correction loop all run over the [Band](https://band.ai) SDK.

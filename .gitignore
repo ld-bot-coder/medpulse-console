@@ -51,3 +51,4 @@ Thumbs.db
 # The cloned competitor repo — reference only, don't publish
 # ============================================================
 example/
+railway.env
